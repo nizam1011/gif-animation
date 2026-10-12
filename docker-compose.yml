@@ -4,7 +4,8 @@ services:
     image: shape-to-equations
     container_name: shape-to-equations
     ports:
-      - "7777:8000"
+      # BIND comes from .env; set it to e.g. 127.0.0.1:7780 when nginx sits in front.
+      - "${BIND:-7777}:8000"
     env_file:
       - path: .env
         required: false

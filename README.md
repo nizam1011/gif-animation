@@ -55,6 +55,10 @@ docker compose down
 
 `web/index.html` still works on its own when opened directly as a file, without accounts or limits.
 
+### Behind nginx with https
+
+[deploy/nginx-site.conf](deploy/nginx-site.conf) is a host nginx site that serves the app over https on port 7777 and forwards to the container. With it, set `BIND=127.0.0.1:7780`, `TRUST_PROXY=1` and `COOKIE_SECURE=1` in `.env`, so the container is reachable only through nginx and sign-in cookies are sent over https only.
+
 Settings in `.env`:
 
 | Setting | Purpose |
@@ -63,6 +67,8 @@ Settings in `.env`:
 | `APP_URL` | Address used for links in emails |
 | `DEFAULT_QUOTA` | Conversions a new account starts with (default 10) |
 | `COOKIE_SECURE` | Set to `1` when served over https |
+| `BIND` | Host address and port the container is published on (default `7777`) |
+| `TRUST_PROXY` | Set to `1` behind a reverse proxy, to use its forwarded headers |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Mail account, if you prefer the file to the admin page |
 
 ## How it works

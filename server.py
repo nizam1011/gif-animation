@@ -14,6 +14,7 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, g, jsonify, redirect, request, send_from_directory, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE = Path(__file__).parent
@@ -47,6 +48,9 @@ def load_secret():
 
 app = Flask(__name__, static_folder=None)
 app.secret_key = load_secret()
+if os.environ.get("TRUST_PROXY") == "1":
+    # Behind nginx: take the visitor's address and scheme from the headers it adds.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
