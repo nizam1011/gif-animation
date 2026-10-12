@@ -11,9 +11,17 @@
   body { background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; display: grid; place-items: center; padding: 24px 16px; }
   main { width: 100%; max-width: 380px; }
   .brand { text-align: center; margin-bottom: 20px; }
-  .brand svg { width: 190px; height: 70px; display: block; margin: 0 auto 6px; }
+  #demo { display: block; width: min(250px, 62vw); aspect-ratio: 1; margin: 0 auto 8px; }
   .brand h1 { font-size: 20px; margin: 0; font-weight: 600; }
-  .brand p { color: var(--dim); margin: 4px 0 0; font-size: 14px; }
+  .brand p { color: var(--dim); margin: 6px auto 0; font-size: 14px; max-width: 34ch; }
+  /* Room to spare: animation beside the form instead of above it. */
+  @media (min-width: 860px) {
+    main { max-width: 860px; display: grid; grid-template-columns: 1fr 380px; gap: 48px; align-items: center; }
+    .brand { margin: 0; }
+    #demo { width: min(400px, 100%); }
+    .brand h1 { font-size: 24px; }
+    .brand p { font-size: 15px; }
+  }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px; }
   h2 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
   .sub { color: var(--dim); font-size: 14px; margin: 0 0 16px; overflow-wrap: anywhere; }
@@ -33,16 +41,9 @@
 <body>
 <main>
   <div class="brand">
-    <svg viewBox="0 0 190 70" aria-hidden="true">
-      <circle cx="42" cy="35" r="24" fill="none" stroke="#8fd0c8" stroke-width="1.5"/>
-      <circle cx="59" cy="18" r="9" fill="none" stroke="#8fd0c8" stroke-width="1" opacity=".6"/>
-      <line x1="42" y1="35" x2="59" y2="18" stroke="#8fd0c8" stroke-width="1"/>
-      <line x1="65" y1="12" x2="112" y2="12" stroke="#8fd0c8" stroke-width="1" stroke-dasharray="4 4" opacity=".7"/>
-      <path d="M112 12 C150 4 172 22 160 40 C150 56 128 62 118 50 C110 40 126 30 140 36" fill="none" stroke="#f0714b" stroke-width="2.4" stroke-linecap="round"/>
-      <circle cx="112" cy="12" r="2.6" fill="#fff"/>
-    </svg>
+    <canvas id="demo" role="img" aria-label="Animation: two sets of rotating circles steer a pen that traces the outline of a star"></canvas>
     <h1>Shape to Equations</h1>
-    <p>Turn any shape into the equations that draw it.</p>
+    <p>Any shape can be drawn by circles turning at different speeds. Upload yours to get its equations and an animation of it being drawn.</p>
   </div>
 
   <div class="card">
@@ -169,6 +170,69 @@ document.querySelectorAll('[data-resend]').forEach(b => b.addEventListener('clic
 }));
 document.querySelectorAll('input.code').forEach(i => i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, ''); }));
 show('signin');
+})();
+
+// The looping demo: a star traced by two chains of rotating circles, as in the app.
+(() => {
+'use strict';
+const TAU = Math.PI * 2, M = 512, N = 14, cv = document.getElementById('demo'), g = cv.getContext('2d');
+
+// Star outline, scaled to fit -1..1, resampled to M evenly spaced points.
+const corners = Array.from({ length: 10 }, (_, i) => { const r = i % 2 ? 0.42 : 1, th = Math.PI * i / 5; return [r * Math.sin(th), r * Math.cos(th)]; });
+const ys = corners.map(p => p[1]), cy = (Math.min(...ys) + Math.max(...ys)) / 2, s = 2 / 1.9022;
+const seg = corners.map((p, i) => Math.hypot(corners[(i + 1) % 10][0] - p[0], corners[(i + 1) % 10][1] - p[1]));
+const total = seg.reduce((p, q) => p + q, 0), X = new Float64Array(M), Y = new Float64Array(M);
+for (let j = 0, i = 0, start = 0; j < M; j++) {
+  const at = total * j / M;
+  while (start + seg[i] < at) start += seg[i++];
+  const u = (at - start) / seg[i], p = corners[i], q = corners[(i + 1) % 10];
+  X[j] = (p[0] + (q[0] - p[0]) * u) * s; Y[j] = (p[1] + (q[1] - p[1]) * u - cy) * s;
+}
+// Fourier coefficients: x(t) = a0 + sum a cos kt + b sin kt, y(t) = c0 + sum c cos kt + d sin kt.
+const a = [0], b = [0], c = [0], d = [0];
+for (let j = 0; j < M; j++) { a[0] += X[j] / M; c[0] += Y[j] / M; }
+for (let k = 1; k <= N; k++) {
+  let sa = 0, sb = 0, sc = 0, sd = 0;
+  for (let j = 0; j < M; j++) { const co = Math.cos(TAU * k * j / M), si = Math.sin(TAU * k * j / M); sa += X[j] * co; sb += X[j] * si; sc += Y[j] * co; sd += Y[j] * si; }
+  a[k] = 2 * sa / M; b[k] = 2 * sb / M; c[k] = 2 * sc / M; d[k] = 2 * sd / M;
+}
+const at = t => { let x = a[0], y = c[0]; for (let k = 1; k <= N; k++) { const co = Math.cos(k * t), si = Math.sin(k * t); x += a[k] * co + b[k] * si; y += c[k] * co + d[k] * si; } return [x, y]; };
+const curve = Array.from({ length: M + 1 }, (_, j) => at(TAU * j / M));
+
+function chain(A, B, t, x, y, sc, color, vertical) {
+  g.strokeStyle = color; g.lineWidth = 1;
+  for (let k = 1; k <= N; k++) {
+    const r = Math.hypot(A[k], B[k]) * sc, th = k * t - Math.atan2(B[k], A[k]);
+    const nx = vertical ? x - r * Math.sin(th) : x + r * Math.cos(th), ny = vertical ? y - r * Math.cos(th) : y - r * Math.sin(th);
+    if (r > 0.75) {
+      g.globalAlpha = k === 1 ? 0.9 : 0.4; g.beginPath(); g.arc(x, y, r, 0, TAU); g.stroke();
+      g.globalAlpha = 0.6; g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
+    }
+    x = nx; y = ny;
+  }
+  g.globalAlpha = 1; g.fillStyle = color; g.beginPath(); g.arc(x, y, 3, 0, TAU); g.fill();
+  return [x, y];
+}
+
+function draw(t) {
+  const dpr = window.devicePixelRatio || 1, S = cv.clientWidth;
+  if (cv.width !== Math.round(S * dpr)) cv.width = cv.height = Math.round(S * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, S, S); g.lineJoin = g.lineCap = 'round';
+  const sc = S / 4.9, ox = S / 2 + 1.15 * sc, oy = S / 2 + 1.15 * sc, far = S / 2 - 1.15 * sc;
+  const path = upto => { g.beginPath(); for (let j = 0; j <= upto; j++) { const p = curve[j]; g.lineTo(ox + p[0] * sc, oy - p[1] * sc); } };
+  path(M); g.fillStyle = 'rgba(223,232,230,.13)'; g.fill();
+  g.strokeStyle = '#f0714b'; g.lineWidth = 2.2; g.globalAlpha = 0.3; g.stroke();
+  g.globalAlpha = 1; path(Math.floor(t / TAU * M)); g.stroke();
+  const tx = chain(a, b, t, ox + a[0] * sc, far, sc, '#8fd0c8', false), ty = chain(c, d, t, far, oy - c[0] * sc, sc, '#e4b34a', true);
+  g.setLineDash([6, 5]); g.lineWidth = 1; g.globalAlpha = 0.7;
+  g.strokeStyle = '#8fd0c8'; g.beginPath(); g.moveTo(tx[0], tx[1]); g.lineTo(tx[0], ty[1]); g.stroke();
+  g.strokeStyle = '#e4b34a'; g.beginPath(); g.moveTo(ty[0], ty[1]); g.lineTo(tx[0], ty[1]); g.stroke();
+  g.setLineDash([]); g.globalAlpha = 1; g.fillStyle = '#fff'; g.beginPath(); g.arc(tx[0], ty[1], 3.5, 0, TAU); g.fill();
+}
+
+// One lap every 9 seconds, forever. People who ask for reduced motion get a still frame instead.
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) { draw(TAU * 0.62); addEventListener('resize', () => draw(TAU * 0.62)); }
+else { const loop = now => { draw((now / 9000 % 1) * TAU); requestAnimationFrame(loop); }; requestAnimationFrame(loop); }
 })();
 </script>
 </body>

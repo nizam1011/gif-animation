@@ -72,9 +72,42 @@
   table { border-collapse: collapse; width: 100%; font: 12px/1.4 Consolas, "Cascadia Mono", monospace; font-variant-numeric: tabular-nums; }
   th, td { padding: 3px 8px; text-align: right; border-bottom: 1px solid #1a2625; }
   th { position: sticky; top: 0; background: var(--panel); color: var(--dim); font-weight: 600; }
+  .sec { margin-bottom: 16px; }
+  .fold > summary, #secEq, #eqHead, #eqBackdrop { display: none; }
+  #status:empty { display: none; }
+
+  /* Phones and tablets: one column, in the order shape, drawing, adjustments, GIF. The equations move into a pop-up. */
   @media (max-width: 1100px) {
-    body { height: auto; } main { display: block; } #stage { height: 70vh; } #right { height: 70vh; }
-    #left, #right { border: 0; border-top: 1px solid var(--line); }
+    body { height: auto; }
+    header > span { display: none; }
+    main { display: flex; flex-direction: column; }
+    #left { display: contents; }
+    .sec { margin: 0; padding: 14px 16px; background: var(--panel); border-top: 1px solid var(--line); }
+    #secShape { order: 1; border-top: 0; }
+    #secShape .hint { display: none; }   /* drag-and-drop and paste are desktop habits */
+    #stage { order: 2; height: min(100vw, 62vh); flex: none; }
+    #secControls { order: 3; }
+    #secGif { order: 4; }
+    #secEq { order: 5; display: block; }
+    #secEq button { width: 100%; padding: 12px; white-space: normal; }
+    .fold > summary { display: list-item; cursor: pointer; font-weight: 600; padding: 4px 0; }
+    .fold[open] > summary { margin-bottom: 12px; }
+    #gifOpts { margin-bottom: 12px; }
+    button, select, .filebtn, input[type=number] { padding: 9px 12px; }
+    .presets button { padding: 7px 10px; min-width: 40px; }
+    #acct button { padding: 5px 10px; }
+    #right { display: none; border: 1px solid var(--line); border-radius: 10px; }
+    #right.open { display: flex; position: fixed; inset: 10px; z-index: 60; box-shadow: 0 10px 40px #000a; }
+    #eqBackdrop.open { display: block; position: fixed; inset: 0; z-index: 55; background: #000a; }
+    #eqHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  }
+
+  /* A phone turned sideways is short and wide: shape controls sit beside the drawing, which fills the height. */
+  @media (max-width: 1100px) and (orientation: landscape) and (max-height: 560px) {
+    main { display: grid; grid-template-columns: minmax(230px, 32%) minmax(0, 1fr); }
+    #secShape { grid-column: 1; grid-row: 1; border-right: 1px solid var(--line); }
+    #stage { grid-column: 2; grid-row: 1; height: calc(100vh - 58px); height: calc(100dvh - 58px); min-height: 240px; }
+    #secControls, #secGif, #secEq { grid-column: 1 / -1; }
   }
 </style>
 </head>
@@ -98,6 +131,7 @@
 </dialog>
 <main>
   <aside id="left">
+    <div class="sec" id="secShape">
     <h2>Shape</h2>
     <div class="row">
       <label class="filebtn">Open image or SVG<input type="file" id="file" accept="image/*,.svg"></label>
@@ -113,7 +147,11 @@
       </select>
     </div>
     <p class="hint">You can also drop a file anywhere, or paste an image from the clipboard.</p>
+    <div id="status" role="status"></div>
+    </div>
 
+    <details class="sec fold" id="secControls" open>
+    <summary>Adjust the drawing</summary>
     <div id="svgOpts" hidden>
       <div class="row">
         <label for="svgMode">SVG as</label>
@@ -147,10 +185,13 @@
     <label class="check"><input type="checkbox" id="animate" checked> Animate tracing</label>
     <div class="row"><label for="speed">Speed</label></div>
     <input type="range" id="speed" min="1" max="40" step="1" value="10">
-    <div id="status"></div>
+    </details>
 
+    <div class="sec" id="secGif">
     <h2>Animated GIF</h2>
     <p class="hint">Draws every line in turn, then shows the image.</p>
+    <details class="fold" id="gifOpts" open>
+    <summary>GIF options</summary>
     <div class="row">
       <label for="gifStyle">Style</label>
       <select id="gifStyle">
@@ -178,8 +219,12 @@
       <input type="range" id="gifDark" min="1" max="5" step="1" value="3">
     </div>
     <label class="check"><input type="checkbox" id="gifLoop"> Loop forever (off plays once)</label>
+    </details>
     <div class="row"><button id="gifBtn" class="on">Export GIF</button><span id="gifMsg" class="stat"></span></div>
     <img id="gifPreview" alt="Exported animation" hidden style="max-width:100%;border:1px solid var(--line);border-radius:6px">
+    </div>
+
+    <div class="sec" id="secEq"><button id="eqOpen">Do you want to see the equations that drew this?</button></div>
   </aside>
 
   <section id="stage">
@@ -191,7 +236,8 @@
     </div>
   </section>
 
-  <aside id="right">
+  <aside id="right" aria-labelledby="eqTitle">
+    <div id="eqHead"><strong id="eqTitle">The equations that drew this</strong><button id="eqClose">Close</button></div>
     <div class="row">
       <label for="curveSel">Curve</label><select id="curveSel"></select>
       <label for="digits">Decimals</label>
@@ -230,6 +276,7 @@
       <textarea id="exportText" readonly spellcheck="false"></textarea>
     </div>
   </aside>
+  <div id="eqBackdrop"></div>
 </main>
 
 <script>
@@ -1264,6 +1311,23 @@ addEventListener('dragleave', e => { if (!e.relatedTarget) stage.classList.remov
 addEventListener('drop', e => { e.preventDefault(); stage.classList.remove('drop'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
 addEventListener('paste', e => { const f = [...e.clipboardData.files].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
 new ResizeObserver(resize).observe(stage);
+
+// Narrow screens: the option groups start folded, and the equations open as a pop-up.
+const narrow = matchMedia('(max-width: 1100px)');
+function showEquations(open) {
+  $('right').classList.toggle('open', open); $('eqBackdrop').classList.toggle('open', open);
+  if (open) { $('right').setAttribute('role', 'dialog'); updateOutput(); $('eqClose').focus(); }
+  else { $('right').removeAttribute('role'); }
+}
+function syncLayout() {
+  document.querySelectorAll('.fold').forEach(d => { d.open = !narrow.matches; });
+  if (!narrow.matches) showEquations(false);
+}
+narrow.addEventListener('change', syncLayout);
+syncLayout();
+$('eqOpen').onclick = () => showEquations(true);
+$('eqClose').onclick = $('eqBackdrop').onclick = () => { showEquations(false); $('eqOpen').focus(); };
+addEventListener('keydown', e => { if (e.key === 'Escape' && $('right').classList.contains('open')) $('eqClose').click(); });
 
 $('minVal').textContent = $('minFrac').value + '% of largest';
 window.shapeApp = { state, loadFile, loadSample, setN, fitError, makeGif, sketchOf };
