@@ -31,6 +31,11 @@
   .tag { font-size: 12px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
   .tag.approved { color: var(--xcol); border-color: #2c5a55; } .tag.denied { color: #ff8f7a; border-color: #6a3a31; }
   #msg { min-height: 1.4em; margin: 10px 0 0; color: #ff8f7a; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .stat span { color: var(--dim); font-size: 12px; }
+  .stat.main b { color: var(--accent); }
   .mail { padding: 14px 16px; }
   .mail p { margin: 0 0 12px; }
   .mail .fields { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -46,6 +51,8 @@
 <header><h1>Admin</h1><span id="who" style="color:var(--dim)"></span><a href="/">Back to the app</a></header>
 <main>
   <p id="msg" role="status"></p>
+  <h2>Shapes processed</h2>
+  <div class="stats" id="stats"></div>
   <h2>Waiting for approval</h2>
   <div class="wrap" id="pending"></div>
   <h2>Users</h2>
@@ -102,6 +109,12 @@ function table(target, heads, rows, emptyText) {
 async function load() {
   const d = await call('/api/admin/overview');
   if (!d.ok) { $('msg').textContent = d.error || 'Could not load the admin data.'; return; }
+
+  const s = d.stats;
+  $('stats').replaceChildren(...[
+    [s.total, 'Total', 'main'], [s.image, 'Images'], [s.svg, 'SVGs'], [s.drawing, 'Drawings'],
+    [s.last_day, 'Last 24 hours'], [s.last_week, 'Last 7 days'], [s.users, 'Confirmed users'],
+  ].map(([n, label, cls]) => el('div', { className: 'stat ' + (cls || '') }, el('b', { textContent: n.toLocaleString() }), el('span', { textContent: label }))));
 
   table('pending', ['User', '#Used', 'Note', 'Asked', 'Add'], d.requests.filter(r => r.status === 'pending').map(r => {
     const amount = el('input', { type: 'number', min: 1, max: 10000, value: d.default_grant, ariaLabel: 'Conversions to add for ' + r.email });

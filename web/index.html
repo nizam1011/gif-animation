@@ -165,7 +165,18 @@
       <label for="gifSize">Size</label>
       <select id="gifSize"><option value="360">360 px</option><option value="540" selected>540 px</option><option value="720">720 px</option></select>
     </div>
-    <label class="check"><input type="checkbox" id="gifReveal" checked> <span id="gifRevealLabel">Show the image at the end</span></label>
+    <div class="row">
+      <label for="gifEnd">Ends with</label>
+      <select id="gifEnd">
+        <option value="image">The original image</option>
+        <option value="sketch">A pencil sketch of it</option>
+        <option value="none">Just the lines</option>
+      </select>
+    </div>
+    <div id="gifDarkRow" hidden>
+      <div class="row"><label for="gifDark">Sketch darkness</label><span class="stat" id="gifDarkVal"></span></div>
+      <input type="range" id="gifDark" min="1" max="5" step="1" value="3">
+    </div>
     <label class="check"><input type="checkbox" id="gifLoop"> Loop forever (off plays once)</label>
     <div class="row"><button id="gifBtn" class="on">Export GIF</button><span id="gifMsg" class="stat"></span></div>
     <img id="gifPreview" alt="Exported animation" hidden style="max-width:100%;border:1px solid var(--line);border-radius:6px">
@@ -840,8 +851,11 @@ function setSource(src) {
   if (src.kind === 'raster') { state.thr = src.auto; $('thr').value = Math.round(src.auto * 100); $('thrVal').textContent = $('thr').value + '%'; }
   $('rasterOpts').hidden = src.kind !== 'raster';
   $('svgOpts').hidden = !state.svgText;
-  $('gifReveal').disabled = !src.image;
-  $('gifRevealLabel').textContent = src.image ? 'Show the image at the end' : 'Show the image at the end (no image loaded)';
+  // Without a picture (drawings, some samples) the GIF can only end on the lines.
+  $('gifEnd').disabled = !src.image;
+  if (!src.image) $('gifEnd').value = 'none'; else if ($('gifEnd').value === 'none' && state.gifEndForced) $('gifEnd').value = 'image';
+  state.gifEndForced = !src.image;
+  showSketchDark();
   recompute();
 }
 
@@ -1016,21 +1030,68 @@ function buildPalette(hist, sums, maxColors) {
   return { palette, index };
 }
 
-// opts: { style: 'paper' | 'dark' | 'image', seconds, size, reveal, loop }
+// A pencil-style rendering of a picture: `ink` on `paper` (both [r, g, b]), w x h pixels.
+// Each pixel is compared with the average around it, so edges and texture come out as strokes
+// while flat areas stay blank, whatever their original tone.
+function sketchOf(drawable, w, h, paper, ink, dark = 1.8) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(drawable, 0, 0, w, h);
+  const im = g.getImageData(0, 0, w, h), d = im.data, n = w * h;
+  const gray = new Float32Array(n);
+  for (let i = 0; i < n; i++) gray[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+  // Three box blurs in each direction are a close stand-in for a Gaussian.
+  const r = Math.max(2, Math.round(Math.max(w, h) / 90)), tmp = new Float32Array(n);
+  let blur = gray.slice();
+  const pass = (from, to, len, lines, step, stride) => {
+    for (let l = 0; l < lines; l++) {
+      const base = l * stride;
+      let sum = 0;
+      for (let i = -r; i <= r; i++) sum += from[base + Math.min(len - 1, Math.max(0, i)) * step];
+      for (let i = 0; i < len; i++) {
+        to[base + i * step] = sum / (2 * r + 1);
+        sum += from[base + Math.min(len - 1, i + r + 1) * step] - from[base + Math.max(0, i - r) * step];
+      }
+    }
+  };
+  for (let k = 0; k < 3; k++) { pass(blur, tmp, w, h, 1, w); pass(tmp, blur, h, w, w, 1); }
+  for (let y = 0, i = 0; y < h; y++) {
+    const up = y ? -w : 0, dn = y < h - 1 ? w : 0;
+    for (let x = 0; x < w; x++, i++) {
+      // Shading: how much darker the pixel is than its surroundings. `dark` deepens it.
+      const light = Math.min(1, (gray[i] + 12) / (blur[i] + 12));
+      // Outline: a crisp line wherever the tone changes sharply (Sobel gradient).
+      const lf = x ? -1 : 0, rt = x < w - 1 ? 1 : 0;
+      const gx = gray[i + up + rt] + 2 * gray[i + rt] + gray[i + dn + rt] - gray[i + up + lf] - 2 * gray[i + lf] - gray[i + dn + lf];
+      const gy = gray[i + dn + lf] + 2 * gray[i + dn] + gray[i + dn + rt] - gray[i + up + lf] - 2 * gray[i + up] - gray[i + up + rt];
+      const edge = Math.min(1, Math.hypot(gx, gy) * dark / 320);
+      const stroke = 1 - Math.pow(light, 3 * dark) * (1 - 0.85 * edge);
+      for (let ch = 0; ch < 3; ch++) d[4 * i + ch] = paper[ch] + (ink[ch] - paper[ch]) * stroke;
+      d[4 * i + 3] = 255;
+    }
+  }
+  g.putImageData(im, 0, 0);
+  return c;
+}
+
+// opts: { style: 'paper' | 'dark' | 'image', seconds, size, ending: 'image' | 'sketch' | 'none', dark, loop }
 async function makeGif(opts, progress = () => {}) {
   const src = state.source, nm = state.norm, fits = state.fits;
-  const img = opts.reveal && src.image || null;
+  const img = opts.ending !== 'none' && src.image || null;
   let view = img;
   if (!view) {
     const bw = nm.x1 - nm.x0, bh = nm.y1 - nm.y0, pad = 0.08 * Math.max(bw, bh);
     view = { x: nm.x0 - pad, y: nm.y0 - pad, w: bw + 2 * pad, h: bh + 2 * pad };
   }
   const k = opts.size / Math.max(view.w, view.h), W = Math.max(16, Math.round(view.w * k)), H = Math.max(16, Math.round(view.h * k));
-  let bg = '#fbfaf5', ink = '#2b2b2b';
-  if (opts.style === 'dark') { bg = COL.bg; ink = COL.accent; }
+  let paper = [251, 250, 245], pen = [43, 43, 43];
+  if (opts.style === 'dark') { paper = [10, 17, 16]; pen = [240, 113, 75]; }
   else if (opts.style === 'image' && src.bg) {
-    bg = `rgb(${src.bg})`; ink = 0.299 * src.bg[0] + 0.587 * src.bg[1] + 0.114 * src.bg[2] > 140 ? '#2b2b2b' : '#f4f4f0';
+    paper = src.bg; pen = 0.299 * src.bg[0] + 0.587 * src.bg[1] + 0.114 * src.bg[2] > 140 ? [43, 43, 43] : [244, 244, 240];
   }
+  const bg = `rgb(${paper})`, ink = `rgb(${pen})`;
+  // What the lines give way to at the end: the picture itself, or a sketch of it in the same pen and paper.
+  const ending = !img ? null : opts.ending === 'sketch' ? sketchOf(img.drawable, W, H, paper, pen, opts.dark) : img.drawable;
   const canvas = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
   const frame = canvas(), g = frame.getContext('2d', { willReadFrequently: true }), layer = canvas(), lg = layer.getContext('2d');
   const lw = Math.max(1.5, opts.size / 220);
@@ -1069,7 +1130,7 @@ async function makeGif(opts, progress = () => {}) {
   // imageAlpha 0 = lines only, 1 = image only.
   const compose = (imageAlpha, tip) => {
     g.globalAlpha = 1; g.fillStyle = bg; g.fillRect(0, 0, W, H);
-    if (img && imageAlpha > 0) { g.globalAlpha = imageAlpha; g.drawImage(img.drawable, 0, 0, W, H); }
+    if (img && imageAlpha > 0) { g.globalAlpha = imageAlpha; g.drawImage(ending, 0, 0, W, H); }
     g.globalAlpha = img ? 1 - imageAlpha : 1; g.drawImage(layer, 0, 0);
     g.globalAlpha = 1;
     if (tip && ci < fits.length && !(fits[ci].up && fits[ci].up[cj])) {
@@ -1124,7 +1185,7 @@ $('gifBtn').onclick = async () => {
   if (!state.fits.length || state.busy) return;
   state.busy = true; $('gifBtn').disabled = true;
   try {
-    const r = await makeGif({ style: $('gifStyle').value, seconds: +$('gifSecs').value, size: +$('gifSize').value, reveal: $('gifReveal').checked && !$('gifReveal').disabled, loop: $('gifLoop').checked },
+    const r = await makeGif({ style: $('gifStyle').value, seconds: +$('gifSecs').value, size: +$('gifSize').value, ending: $('gifEnd').value, dark: SKETCH_DARK[$('gifDark').value - 1][1], loop: $('gifLoop').checked },
       p => { $('gifMsg').textContent = `Rendering ${Math.round(p * 100)}%`; });
     const url = URL.createObjectURL(r.blob), a = document.createElement('a'), pv = $('gifPreview');
     a.href = url; a.download = 'shape_drawing.gif'; a.click();
@@ -1134,6 +1195,12 @@ $('gifBtn').onclick = async () => {
   } catch (e) { $('gifMsg').textContent = 'Export failed: ' + e.message; }
   finally { state.busy = false; $('gifBtn').disabled = false; }
 };
+const SKETCH_DARK = [['Light', 1], ['Soft', 1.4], ['Medium', 1.8], ['Dark', 2.5], ['Very dark', 3.4]];
+const showSketchDark = () => {
+  $('gifDarkRow').hidden = $('gifEnd').value !== 'sketch';
+  $('gifDarkVal').textContent = SKETCH_DARK[$('gifDark').value - 1][0];
+};
+$('gifEnd').onchange = $('gifDark').oninput = showSketchDark;
 $('gifSecs').oninput = e => { $('gifSecsVal').textContent = e.target.value + ' s'; };
 $('gifSecsVal').textContent = $('gifSecs').value + ' s';
 
@@ -1199,7 +1266,7 @@ addEventListener('paste', e => { const f = [...e.clipboardData.files].find(f => 
 new ResizeObserver(resize).observe(stage);
 
 $('minVal').textContent = $('minFrac').value + '% of largest';
-window.shapeApp = { state, loadFile, loadSample, setN, fitError, makeGif };
+window.shapeApp = { state, loadFile, loadSample, setN, fitError, makeGif, sketchOf };
 loadSample('star');
 initAccount();
 requestAnimationFrame(frame);

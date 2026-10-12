@@ -19,7 +19,7 @@ The app computes the coefficients, shows how the fit improves as N grows, and ca
 - **N slider:** 1 to 800 terms, with a fit-error readout and an Auto button.
 - **Rotating circles:** the epicycle animation for x(t) and y(t), with the original shape ghosted behind the curve.
 - **Exports:** Python (NumPy), Desmos, LaTeX, plain text, JSON and CSV, plus a coefficient table.
-- **Animated GIF:** draws every line in turn, then fades in the original image. Plays once by default, with an option to loop.
+- **Animated GIF:** draws every line in turn, then fades in the original image or a pencil sketch of it. Plays once by default, with an option to loop.
 
 The conversion itself runs in the browser, including the GIF encoder. A small Python server adds accounts around it.
 

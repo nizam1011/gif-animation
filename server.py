@@ -513,8 +513,13 @@ def admin_overview():
     users = con.execute("""SELECT u.id, u.email, u.verified, u.used, u.quota, u.created_at,
                                   (SELECT MAX(created_at) FROM conversions c WHERE c.user_id = u.id) AS last_conversion
                            FROM users u ORDER BY u.created_at DESC""").fetchall()
+    by_kind = dict(con.execute("SELECT kind, COUNT(*) FROM conversions GROUP BY kind").fetchall())
+    since = lambda seconds: con.execute("SELECT COUNT(*) FROM conversions WHERE created_at >= ?", (now() - seconds,)).fetchone()[0]
+    stats = dict(total=sum(by_kind.values()), image=by_kind.get("image", 0), svg=by_kind.get("svg", 0), drawing=by_kind.get("drawing", 0),
+                 last_day=since(86400), last_week=since(7 * 86400), users=sum(1 for u in users if u["verified"]))
     cfg = mail_config()
-    return ok(requests=[dict(r) for r in reqs],
+    return ok(stats=stats,
+              requests=[dict(r) for r in reqs],
               users=[dict(u, is_admin=u["email"] in ADMIN_EMAILS) for u in users],
               default_grant=DEFAULT_QUOTA,
               # The password itself is never sent back to the browser.
