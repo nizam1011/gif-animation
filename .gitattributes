@@ -1,0 +1,3 @@
+# Shell scripts are copied to Linux servers, so they must keep Unix line endings on Windows too.
+*.sh text eol=lf
+*.conf text eol=lf
