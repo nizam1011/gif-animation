@@ -59,6 +59,22 @@ docker compose down
 
 [deploy/nginx-site.conf](deploy/nginx-site.conf) is a host nginx site that serves the app over https on port 7777 and forwards to the container. With it, set `BIND=127.0.0.1:7780`, `TRUST_PROXY=1` and `COOKIE_SECURE=1` in `.env`, so the container is reachable only through nginx and sign-in cookies are sent over https only.
 
+### Backups
+
+[deploy/backup.sh](deploy/backup.sh) saves a compressed, dated copy of the database to `backups/` and keeps 30 days of them. Schedule it nightly with cron:
+
+```
+30 2 * * * /path/to/shape-to-equations/deploy/backup.sh >> /path/to/shape-to-equations/backups/backup.log 2>&1
+```
+
+To go back to a backup (anything newer than it is lost):
+
+```bash
+deploy/restore.sh backups/app-YYYYMMDD-HHMMSS.db.gz
+```
+
+The backups sit on the same disk as the app, so they protect against a bad update or a deleted volume, not a failed disk. They contain password hashes and the mail password; the script keeps them readable by the owner only.
+
 Settings in `.env`:
 
 | Setting | Purpose |
