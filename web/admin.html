@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Shape to Equations</title>
+<style>
+  :root { --bg: #0c1413; --panel: #121c1b; --line: #263534; --text: #dfe8e6; --dim: #8fa3a0; --accent: #f0714b; --xcol: #8fd0c8; --field: #0a1110; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header a { color: var(--xcol); margin-left: auto; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 24px 0 8px; font-weight: 600; }
+  h2:first-child { margin-top: 4px; }
+  .wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  td.note { max-width: 320px; overflow-wrap: anywhere; color: var(--dim); }
+  .empty { padding: 16px; color: var(--dim); }
+  button, input { font: inherit; border-radius: 6px; border: 1px solid var(--line); background: #1b2928; color: var(--text); padding: 5px 10px; }
+  button { cursor: pointer; } button:hover { border-color: #3d5553; }
+  button.go { background: var(--accent); border-color: var(--accent); color: #1a0d08; font-weight: 600; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--xcol); outline-offset: 1px; }
+  input[type=number] { width: 84px; background: var(--field); }
+  .acts { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .tag { font-size: 12px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .tag.approved { color: var(--xcol); border-color: #2c5a55; } .tag.denied { color: #ff8f7a; border-color: #6a3a31; }
+  #msg { min-height: 1.4em; margin: 10px 0 0; color: #ff8f7a; }
+  .mail { padding: 14px 16px; }
+  .mail p { margin: 0 0 12px; }
+  .mail .fields { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .mail label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); flex: 1 1 220px; max-width: 320px; }
+  .mail label input { background: var(--field); padding: 7px 10px; width: 100%; }
+  .mail details { margin-bottom: 12px; color: var(--dim); }
+  .mail details .fields { margin: 10px 0 0; }
+  .mail .help { margin: 14px 0 0; color: var(--dim); font-size: 13px; max-width: 70ch; }
+  #mailMsg.good { color: var(--xcol); } #mailMsg.bad { color: #ff8f7a; }
+</style>
+</head>
+<body>
+<header><h1>Admin</h1><span id="who" style="color:var(--dim)"></span><a href="/">Back to the app</a></header>
+<main>
+  <p id="msg" role="status"></p>
+  <h2>Waiting for approval</h2>
+  <div class="wrap" id="pending"></div>
+  <h2>Users</h2>
+  <div class="wrap" id="users"></div>
+  <h2>Past requests</h2>
+  <div class="wrap" id="history"></div>
+
+  <h2>Email sending</h2>
+  <form class="wrap mail" id="mailForm">
+    <p id="mailState"></p>
+    <div class="fields">
+      <label>Gmail address<input id="mailUser" type="email" autocomplete="off" required></label>
+      <label>App password<input id="mailPass" type="password" autocomplete="new-password"></label>
+    </div>
+    <details>
+      <summary>Not using Gmail?</summary>
+      <div class="fields">
+        <label>Mail server<input id="mailHost" type="text" value="smtp.gmail.com"></label>
+        <label>Port<input id="mailPort" type="number" min="1" max="65535" value="587"></label>
+      </div>
+    </details>
+    <div class="acts"><button class="go">Save</button><button type="button" id="mailTest">Send me a test email</button><span id="mailMsg" role="status"></span></div>
+    <p class="help">Use a Google <b>app password</b>, not your normal Google password: in your Google Account turn on 2-Step Verification, then create one under App passwords. The password is stored on the server so it can send mail, and is never shown again here.</p>
+  </form>
+</main>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+const when = t => t ? new Date(t * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+
+async function call(url, data) {
+  const r = await fetch(url, data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {});
+  if (r.status === 401) { location.href = '/login'; return { ok: false }; }
+  let j = {};
+  try { j = await r.json(); } catch { /* not JSON */ }
+  return { ...j, ok: r.ok };
+}
+
+async function act(url, data) {
+  const r = await call(url, data);
+  $('msg').textContent = r.ok ? '' : (r.error || 'That did not work. Please try again.');
+  await load();
+}
+
+function table(target, heads, rows, emptyText) {
+  if (!rows.length) return $(target).replaceChildren(el('div', { className: 'empty', textContent: emptyText }));
+  const head = el('tr', {}, ...heads.map(h => el('th', { textContent: h.replace(/^#/, ''), className: h.startsWith('#') ? 'num' : '' })));
+  $(target).replaceChildren(el('table', {}, el('thead', {}, head), el('tbody', {}, ...rows)));
+}
+
+async function load() {
+  const d = await call('/api/admin/overview');
+  if (!d.ok) { $('msg').textContent = d.error || 'Could not load the admin data.'; return; }
+
+  table('pending', ['User', '#Used', 'Note', 'Asked', 'Add'], d.requests.filter(r => r.status === 'pending').map(r => {
+    const amount = el('input', { type: 'number', min: 1, max: 10000, value: d.default_grant, ariaLabel: 'Conversions to add for ' + r.email });
+    return el('tr', {},
+      el('td', { textContent: r.email }),
+      el('td', { className: 'num', textContent: `${r.used} of ${r.quota}` }),
+      el('td', { className: 'note', textContent: r.note || '—' }),
+      el('td', { textContent: when(r.created_at) }),
+      el('td', {}, el('div', { className: 'acts' }, amount,
+        el('button', { className: 'go', textContent: 'Approve', onclick: () => act('/api/admin/requests/' + r.id, { action: 'approve', amount: +amount.value }) }),
+        el('button', { textContent: 'Deny', onclick: () => act('/api/admin/requests/' + r.id, { action: 'deny' }) }))));
+  }), 'Nothing is waiting.');
+
+  table('users', ['Email', 'Status', '#Used', 'Limit', 'Joined', 'Last conversion'], d.users.map(u => {
+    const quota = el('input', { type: 'number', min: 0, max: 1000000, value: u.quota, ariaLabel: 'Conversion limit for ' + u.email });
+    return el('tr', {},
+      el('td', { textContent: u.email }),
+      el('td', {}, el('span', { className: 'tag', textContent: u.is_admin ? 'admin, unlimited' : u.verified ? 'active' : 'email not confirmed' })),
+      el('td', { className: 'num', textContent: u.used }),
+      el('td', {}, el('div', { className: 'acts' }, quota, el('button', { textContent: 'Save', onclick: () => act('/api/admin/users/' + u.id, { quota: +quota.value }) }))),
+      el('td', { textContent: when(u.created_at) }),
+      el('td', { textContent: when(u.last_conversion) || '—' }));
+  }), 'No one has signed up yet.');
+
+  table('history', ['User', 'Outcome', 'Note', 'Asked', 'Decided', 'By'], d.requests.filter(r => r.status !== 'pending').map(r => el('tr', {},
+    el('td', { textContent: r.email }),
+    el('td', {}, el('span', { className: 'tag ' + r.status, textContent: r.status === 'approved' ? `approved, +${r.amount}` : 'denied' })),
+    el('td', { className: 'note', textContent: r.note || '—' }),
+    el('td', { textContent: when(r.created_at) }),
+    el('td', { textContent: when(r.decided_at) }),
+    el('td', { textContent: r.decided_by || '' }))), 'No requests have been decided yet.');
+
+  const m = d.mail;
+  $('mailState').textContent = m.source === 'none'
+    ? 'No mail account is set up yet, so codes are only written to the server log.'
+    : `Sending as ${m.user} (set in the ${m.source}).`;
+  if (document.activeElement.form !== $('mailForm')) {
+    $('mailUser').value = m.user; $('mailHost').value = m.host; $('mailPort').value = m.port;
+    $('mailPass').placeholder = m.has_password ? 'Saved. Leave blank to keep it.' : '16-character app password';
+  }
+}
+
+const mailSay = (text, good) => { $('mailMsg').textContent = text; $('mailMsg').className = good ? 'good' : 'bad'; };
+$('mailForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const r = await call('/api/admin/mail', { user: $('mailUser').value, password: $('mailPass').value, host: $('mailHost').value, port: +$('mailPort').value });
+  if (r.ok) { $('mailPass').value = ''; document.activeElement.blur(); await load(); }
+  mailSay(r.ok ? 'Saved.' : r.error || 'Could not save.', r.ok);
+});
+$('mailTest').onclick = async () => {
+  $('mailTest').disabled = true; mailSay('Sending…', true);
+  const r = await call('/api/admin/mail/test', {});
+  $('mailTest').disabled = false;
+  mailSay(r.ok ? `Sent to ${r.to}. Check that inbox.` : r.error || 'Could not send.', r.ok);
+};
+
+call('/api/me').then(m => { if (m.ok) $('who').textContent = m.email; });
+load();
+})();
+</script>
+</body>
+</html>

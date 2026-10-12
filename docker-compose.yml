@@ -4,5 +4,13 @@ services:
     image: shape-to-equations
     container_name: shape-to-equations
     ports:
-      - "7777:80"
+      - "7777:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - shape-data:/data
     restart: unless-stopped
+
+volumes:
+  shape-data:

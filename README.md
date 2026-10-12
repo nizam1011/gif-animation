@@ -21,23 +21,49 @@ The app computes the coefficients, shows how the fit improves as N grows, and ca
 - **Exports:** Python (NumPy), Desmos, LaTeX, plain text, JSON and CSV, plus a coefficient table.
 - **Animated GIF:** draws every line in turn, then fades in the original image. Plays once by default, with an option to loop.
 
-Everything runs in the browser. There is no backend, no build step and no external dependency; the GIF encoder is part of the page.
+The conversion itself runs in the browser, including the GIF encoder. A small Python server adds accounts around it.
+
+## Accounts and limits
+
+- **Sign-up:** email and password, confirmed with a 6-digit code sent to that address. Password reset works the same way.
+- **Allowance:** each account starts with 10 conversions. One is used each time a new image, SVG or drawing is converted; changing N, exporting and the built-in samples are free.
+- **Requesting more:** when the allowance is used up, the user can send a request with an optional note.
+- **Admin page** (`/admin`): approve or deny requests, set any user's limit, and save the mail account used to send codes. Admins are the addresses listed in `ADMIN_EMAILS`; they sign up like anyone else and have no limit.
+
+The allowance is counted on the server, but the conversion happens in the browser, so it limits ordinary use rather than a determined user who edits the page's code.
 
 ## Run it
 
-Open `index.html` in a browser, or serve it with Docker:
-
 ```bash
+cp .env.example .env    # then set ADMIN_EMAILS
 docker compose up -d --build
 ```
 
-Then open http://localhost:7777.
+Then open http://localhost:7777, create an account with an admin address, and save the mail account under **Admin → Email sending**. For Gmail that is the address plus a Google app password.
 
-After editing `index.html`, run the same command again to rebuild the image. To stop and remove the container:
+Until a mail account is saved, no email is sent and the codes appear in the container log:
+
+```bash
+docker compose logs -f
+```
+
+One container runs everything. Accounts live in a SQLite file on the `shape-data` volume, so they survive rebuilds. Run the same `up` command again after changing the code, and stop it with:
 
 ```bash
 docker compose down
 ```
+
+`web/index.html` still works on its own when opened directly as a file, without accounts or limits.
+
+Settings in `.env`:
+
+| Setting | Purpose |
+|---|---|
+| `ADMIN_EMAILS` | Comma-separated admin addresses |
+| `APP_URL` | Address used for links in emails |
+| `DEFAULT_QUOTA` | Conversions a new account starts with (default 10) |
+| `COOKIE_SECURE` | Set to `1` when served over https |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Mail account, if you prefer the file to the admin page |
 
 ## How it works
 

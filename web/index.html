@@ -15,6 +15,18 @@
   header { padding: 10px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
   header span { color: var(--dim); font-size: 13px; }
+  #acct { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  #acct[hidden] { display: none; }
+  #acct button { padding: 3px 10px; }
+  #acct a { color: var(--xcol); }
+  #acctEmail { color: var(--dim); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(420px, calc(100vw - 32px)); }
+  dialog::backdrop { background: #000a; }
+  dialog h3 { margin: 0 0 8px; font-size: 16px; }
+  dialog p { margin: 0 0 12px; color: var(--dim); }
+  dialog textarea { display: block; height: 84px; min-height: 0; margin-bottom: 12px; font: inherit; }
+  dialog .row { margin: 0; }
+  dialog [hidden] { display: none; }
   main { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr) 400px; }
   aside { background: var(--panel); overflow-y: auto; padding: 12px 14px; }
   #left { border-right: 1px solid var(--line); }
@@ -70,7 +82,20 @@
 <header>
   <h1>Shape to Equations</h1>
   <span>Give it a shape; get x(t) and y(t) as sums of sines and cosines that trace it.</span>
+  <div id="acct" hidden>
+    <span id="acctUse" class="stat"></span>
+    <button id="acctMore" hidden>Request more</button>
+    <a id="acctAdmin" href="/admin" hidden>Admin</a>
+    <span id="acctEmail"></span>
+    <button id="acctOut">Log out</button>
+  </div>
 </header>
+<dialog id="moreDlg" aria-labelledby="moreTitle">
+  <h3 id="moreTitle">Conversion limit reached</h3>
+  <p id="moreText"></p>
+  <textarea id="moreNote" maxlength="500" placeholder="Optional note for the admin" aria-label="Note for the admin"></textarea>
+  <div class="row"><button id="moreSend" class="on">Request more</button><button id="moreClose">Close</button></div>
+</dialog>
 <main>
   <aside id="left">
     <h2>Shape</h2>
@@ -742,6 +767,71 @@ function refresh() {
 
 function setStatus(msg, err) { $('status').textContent = msg; $('status').classList.toggle('err', !!err); }
 
+/* ---------- account and conversion allowance ---------- */
+
+let account = null;   // stays null when the page is opened as a plain file with no server behind it
+
+async function api(url, data) {
+  const r = await fetch(url, data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {});
+  let j = {};
+  try { j = await r.json(); } catch { /* not JSON */ }
+  return { ...j, ok: r.ok, status: r.status };
+}
+
+function renderAccount() {
+  const a = account;
+  $('acct').hidden = false;
+  $('acctEmail').textContent = a.email;
+  $('acctAdmin').hidden = !a.is_admin;
+  $('acctUse').textContent = a.unlimited ? 'Unlimited conversions' : `${a.used} of ${a.quota} conversions used`;
+  $('acctMore').hidden = a.unlimited || a.remaining > 0;
+  $('acctMore').textContent = a.pending ? 'Request pending' : 'Request more';
+}
+
+async function initAccount() {
+  if (location.protocol === 'file:') return;
+  try {
+    const r = await api('/api/me');
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (r.ok) { account = r; renderAccount(); }
+  } catch { /* no server: run without accounts */ }
+}
+
+// Uses up one conversion. Resolves to false, after telling the user why, when none are left.
+async function spend(kind, label) {
+  if (!account) return true;
+  let r;
+  try { r = await api('/api/convert', { kind, label: String(label).slice(0, 120) }); }
+  catch { setStatus('Could not reach the server, so the shape was not converted.', true); return false; }
+  if (r.status === 401) { location.href = '/login'; return false; }
+  if (r.quota !== undefined) { Object.assign(account, r); renderAccount(); }
+  if (r.ok) return true;
+  if (r.error_code === 'quota') openMore(); else setStatus(r.error || 'The server refused the conversion.', true);
+  return false;
+}
+
+function openMore() {
+  const a = account;
+  $('moreTitle').textContent = a.pending ? 'Request waiting for approval' : 'Conversion limit reached';
+  $('moreText').textContent = a.pending
+    ? 'Your request for more conversions has been sent. You will be able to convert new shapes once an admin approves it.'
+    : `You have used all ${a.quota} of your conversions. You can ask an admin for more.`;
+  $('moreNote').hidden = $('moreSend').hidden = a.pending;
+  if (!$('moreDlg').open) $('moreDlg').showModal();
+}
+
+$('acctMore').onclick = openMore;
+$('moreClose').onclick = () => $('moreDlg').close();
+$('moreSend').onclick = async () => {
+  $('moreSend').disabled = true;
+  let r;
+  try { r = await api('/api/request-more', { note: $('moreNote').value }); } catch { r = { ok: false }; }
+  $('moreSend').disabled = false;
+  if (r.ok || r.status === 409) { account.pending = true; $('moreNote').value = ''; renderAccount(); openMore(); }
+  else $('moreText').textContent = r.error || 'Could not reach the server. Please try again.';
+};
+$('acctOut').onclick = async () => { try { await api('/api/logout', {}); } finally { location.href = '/login'; } };
+
 /* ---------- inputs ---------- */
 
 function setSource(src) {
@@ -775,27 +865,30 @@ async function svgImage(text) {
   } catch { return null; } finally { URL.revokeObjectURL(url); }
 }
 
-async function applySvg() {
+async function svgSource(text, name) {
   if ($('svgMode').value === 'paths') {
-    const contours = svgToContours(state.svgText);
-    if (contours.length) return setSource({ kind: 'vector', contours, label: state.svgName, image: await svgImage(state.svgText) });
+    const contours = svgToContours(text);
+    if (contours.length) return { kind: 'vector', contours, label: name, image: await svgImage(text) };
   }
-  const url = URL.createObjectURL(new Blob([state.svgText], { type: 'image/svg+xml' }));
-  try { const im = await loadImg(url); setSource(rasterSource(im, im.naturalWidth || 800, im.naturalHeight || 800, state.svgName)); }
+  const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+  try { const im = await loadImg(url); return rasterSource(im, im.naturalWidth || 800, im.naturalHeight || 800, name); }
   finally { URL.revokeObjectURL(url); }
 }
+const applySvg = async () => setSource(await svgSource(state.svgText, state.svgName));
 
 async function loadFile(file) {
   try {
-    exitDraw();
-    if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
-      state.svgText = await file.text(); state.svgName = file.name; await applySvg();
-    } else {
-      state.svgText = null;
+    const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name), name = file.name || 'Pasted image';
+    let src, text = null;
+    if (isSvg) { text = await file.text(); src = await svgSource(text, name); }
+    else {
       const url = URL.createObjectURL(file);
-      try { const im = await loadImg(url); setSource(rasterSource(im, im.naturalWidth, im.naturalHeight, file.name || 'Pasted image')); }
+      try { const im = await loadImg(url); src = rasterSource(im, im.naturalWidth, im.naturalHeight, name); }
       finally { URL.revokeObjectURL(url); }
     }
+    // The file is known to be readable before a conversion is spent on it.
+    if (!(await spend(isSvg ? 'svg' : 'image', name))) return;
+    exitDraw(); state.svgText = text; state.svgName = name; setSource(src);
   } catch (e) { setStatus(e.message, true); }
 }
 
@@ -1080,13 +1173,16 @@ $('download').onclick = () => {
 };
 
 $('drawBtn').onclick = () => { if (state.drawing) return finishDraw(); state.drawing = true; stage.classList.add('drawing'); $('drawBtn').classList.add('on'); state.dirty = true; };
-function finishDraw() {
+async function finishDraw() {
   exitDraw();
-  if (state.strokes.length) { state.svgText = null; setSource({ kind: 'vector', contours: state.strokes.map(closeOrRetrace), label: 'Drawing' }); }
+  if (!state.strokes.length) return;
+  // Adding to a drawing that was already converted is free; a drawing started from blank is a new conversion.
+  if (!state.drawCounted) { if (!(await spend('drawing', 'Drawing'))) return; state.drawCounted = true; }
+  state.svgText = null; setSource({ kind: 'vector', contours: state.strokes.map(closeOrRetrace), label: 'Drawing' });
 }
 $('drawDone').onclick = finishDraw;
-$('drawUndo').onclick = () => { state.strokes.pop(); state.dirty = true; };
-$('drawClear').onclick = () => { state.strokes = []; state.dirty = true; };
+$('drawUndo').onclick = () => { state.strokes.pop(); if (!state.strokes.length) state.drawCounted = false; state.dirty = true; };
+$('drawClear').onclick = () => { state.strokes = []; state.drawCounted = false; state.dirty = true; };
 const pos = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 cv.onpointerdown = e => { if (!state.drawing) return; try { cv.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ } state.stroke = [pos(e)]; state.dirty = true; };
 cv.onpointermove = e => {
@@ -1105,6 +1201,7 @@ new ResizeObserver(resize).observe(stage);
 $('minVal').textContent = $('minFrac').value + '% of largest';
 window.shapeApp = { state, loadFile, loadSample, setN, fitError, makeGif };
 loadSample('star');
+initAccount();
 requestAnimationFrame(frame);
 })();
 </script>
