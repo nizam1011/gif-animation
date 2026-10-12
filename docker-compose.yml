@@ -1,0 +1,8 @@
+services:
+  shape-to-equations:
+    build: .
+    image: shape-to-equations
+    container_name: shape-to-equations
+    ports:
+      - "7777:80"
+    restart: unless-stopped
